@@ -1,122 +1,131 @@
 import streamlit as st
 import pandas as pd
-from utils.auth import Auth
-from utils.data_manager import DataManager
+from datetime import datetime
 import os
+import json
+from pathlib import Path
+import bcrypt #added import for bcrypt
 
-# Initialize authentication and data management
-auth = Auth()
-data_manager = DataManager()
+# Create necessary directories if they don't exist
+Path("data").mkdir(exist_ok=True)
+Path("styles").mkdir(exist_ok=True)
 
-# Configure page
-st.set_page_config(
-    page_title="Hospital Management System",
-    page_icon="🏥",
-    layout="wide"
-)
-
-# Load custom CSS
-with open('styles/custom.css') as f:
-    st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
-
+# Initialize session state
 def initialize_session():
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
     if 'username' not in st.session_state:
         st.session_state.username = None
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = "Dashboard"
 
+# Authentication functions
+def load_admin_credentials():
+    if os.path.exists('admin.json'):
+        with open('admin.json', 'r') as f:
+            return json.load(f)
+    return None
+
+def save_admin_credentials(username, password):
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    admin_data = {
+        'username': username,
+        'password': hashed.decode('utf-8')
+    }
+    with open('admin.json', 'w') as f:
+        json.dump(admin_data, f)
+
+def verify_admin(username, password):
+    admin_data = load_admin_credentials()
+    if admin_data and admin_data['username'] == username:
+        return bcrypt.checkpw(password.encode('utf-8'), 
+                            admin_data['password'].encode('utf-8'))
+    return False
+
+def log_activity(action):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open("audit_log.txt", "a") as f:
+        f.write(f"{timestamp} - {st.session_state.username}: {action}\n")
+
+# Page functions
 def login_page():
     st.title("🏥 Hospital Management System")
 
-    if not auth.admin_exists():
+    admin_exists = load_admin_credentials() is not None
+
+    if not admin_exists:
         st.warning("No admin account exists. Create one now.")
         with st.form("create_admin"):
             new_username = st.text_input("Username")
             new_password = st.text_input("Password", type="password")
             if st.form_submit_button("Create Admin"):
                 if new_username and new_password:
-                    auth.save_admin(new_username, new_password)
-                    st.success("Admin account created successfully! Please log in with your credentials.")
+                    save_admin_credentials(new_username, new_password)
+                    st.success("Admin account created! Please log in.")
                     st.rerun()
                 else:
                     st.error("Please fill in all fields")
     else:
-        st.subheader("Admin Login")
         with st.form("login"):
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
-            submit = st.form_submit_button("Login")
-
-            if submit:
-                if username and password:
-                    if auth.verify_admin(username, password):
-                        st.session_state.logged_in = True
-                        st.session_state.username = username
-                        auth.log_activity("Admin logged in")
-                        st.success("Login successful! Redirecting...")
-                        st.rerun()
-                    else:
-                        st.error("Invalid username or password")
+            if st.form_submit_button("Login"):
+                if verify_admin(username, password):
+                    st.session_state.logged_in = True
+                    st.session_state.username = username
+                    log_activity("Logged in")
+                    st.rerun()
                 else:
-                    st.error("Please enter both username and password")
+                    st.error("Invalid credentials")
 
 def main_page():
-    # Handle navigation through session state to avoid duplicates
-    if 'current_page' not in st.session_state:
-        st.session_state.current_page = "Dashboard"
-
-    # Single navigation sidebar
+    # Sidebar navigation
     with st.sidebar:
         st.title("Navigation")
-
-        # Navigation options
         st.session_state.current_page = st.radio(
             "Go to",
-            ["Dashboard", "Patients", "Appointments", "Inventory", 
-             "Staff", "Billing", "Reports", "Audit Log"]
+            ["Dashboard", "Patients", "Appointments", "Staff",
+             "Inventory", "Pharmacy", "Billing", "Reports", "Audit Log"]
         )
 
-        # Logout button
         if st.button("Logout"):
-            auth.log_activity("Admin logged out")
+            log_activity("Logged out")
             st.session_state.logged_in = False
             st.session_state.username = None
             st.rerun()
 
-    # Page content based on navigation
+    # Main content
     if st.session_state.current_page == "Dashboard":
         st.title("Hospital Dashboard")
 
-        # Summary statistics
+        # Example metrics
         col1, col2, col3, col4 = st.columns(4)
-
-        patients_df = data_manager.load_data("patients")
-        appointments_df = data_manager.load_data("appointments")
-        staff_df = data_manager.load_data("staff")
-        inventory_df = data_manager.load_data("inventory")
-
         with col1:
-            st.metric("Total Patients", len(patients_df))
+            st.metric("Total Patients", "150")
         with col2:
-            st.metric("Today's Appointments", 
-                     len(appointments_df[appointments_df['date'] == pd.Timestamp.now().date().strftime("%Y-%m-%d")]))
+            st.metric("Today's Appointments", "25")
         with col3:
-            st.metric("Staff Members", len(staff_df))
+            st.metric("Available Staff", "45")
         with col4:
-            st.metric("Low Stock Items", 
-                     len(inventory_df[inventory_df['quantity'] < 10]))
+            st.metric("Bed Occupancy", "75%")
 
     elif st.session_state.current_page == "Audit Log":
         st.title("System Audit Log")
         if os.path.exists("audit_log.txt"):
             with open("audit_log.txt", "r") as f:
                 logs = f.readlines()
-            for log in logs:
+            for log in reversed(logs):  # Show most recent first
                 st.text(log.strip())
         else:
             st.info("No audit logs found")
 
 def main():
+    st.set_page_config(
+        page_title="Hospital Management System",
+        page_icon="🏥",
+        layout="wide"
+    )
+
     initialize_session()
 
     if not st.session_state.logged_in:
