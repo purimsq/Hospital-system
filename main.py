@@ -2,13 +2,12 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import os
-import json
-from pathlib import Path
-import bcrypt #added import for bcrypt
+import bcrypt
+from sqlalchemy.orm import Session
+from database import get_db, User, AuditLog, Patient, Appointment, Inventory
 
-# Create necessary directories if they don't exist
-Path("data").mkdir(exist_ok=True)
-Path("styles").mkdir(exist_ok=True)
+# Initialize database session
+db = next(get_db())
 
 # Initialize session state
 def initialize_session():
@@ -20,87 +19,50 @@ def initialize_session():
         st.session_state.current_page = "Dashboard"
     if 'is_admin' not in st.session_state:
         st.session_state.is_admin = False
+    if 'user_id' not in st.session_state:
+        st.session_state.user_id = None
 
 # Authentication functions
-def load_admin_credentials():
-    try:
-        if os.path.exists('admin.json'):
-            with open('admin.json', 'r') as f:
-                return json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
-        if os.path.exists('admin.json'):
-            os.remove('admin.json')  # Remove corrupted file
-    return None
-
-def save_admin_credentials(username, password):
+def save_user_credentials(username, password, role='staff'):
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-    admin_data = {
-        'username': username,
-        'password': hashed.decode('utf-8')
-    }
-    with open('admin.json', 'w') as f:
-        json.dump(admin_data, f)
-
-def load_staff_credentials():
-    try:
-        if os.path.exists('staff.json'):
-            with open('staff.json', 'r') as f:
-                return json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
-        if os.path.exists('staff.json'):
-            os.remove('staff.json')
-    return {'staff': []}
-
-def save_staff_credentials(username, password, role):
-    staff_data = load_staff_credentials()
-    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-    staff_data['staff'].append({
-        'username': username,
-        'password': hashed.decode('utf-8'),
-        'role': role
-    })
-    with open('staff.json', 'w') as f:
-        json.dump(staff_data, f)
+    new_user = User(
+        username=username,
+        password=hashed.decode('utf-8'),
+        role=role
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
 
 def verify_credentials(username, password):
-    # Check admin credentials first
-    admin_data = load_admin_credentials()
-    if admin_data and admin_data['username'] == username:
+    user = db.query(User).filter(User.username == username).first()
+    if user:
         try:
-            if bcrypt.checkpw(password.encode('utf-8'), 
-                            admin_data['password'].encode('utf-8')):
-                return True, True  # authenticated, is_admin
+            if bcrypt.checkpw(password.encode('utf-8'), user.password.encode('utf-8')):
+                user.last_login = datetime.utcnow()
+                db.commit()
+                return True, user.role == 'admin', user.id
         except Exception as e:
-            st.error(f"Error verifying admin credentials: {str(e)}")
-            return False, False
+            st.error(f"Error verifying credentials: {str(e)}")
+    return False, False, None
 
-    # Check staff credentials
-    staff_data = load_staff_credentials()
-    for staff in staff_data['staff']:
-        if staff['username'] == username:
-            try:
-                if bcrypt.checkpw(password.encode('utf-8'), 
-                                staff['password'].encode('utf-8')):
-                    return True, False  # authenticated, not admin
-            except Exception as e:
-                st.error(f"Error verifying staff credentials: {str(e)}")
-                return False, False
+def log_activity(action, details=None):
+    new_log = AuditLog(
+        user_id=st.session_state.user_id,
+        action=action,
+        details=details
+    )
+    db.add(new_log)
+    db.commit()
 
-    return False, False
-
-def log_activity(action):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open("audit_log.txt", "a") as f:
-        f.write(f"{timestamp} - {st.session_state.username}: {action}\n")
-
-# Page functions
 def login_page():
     st.title("🏥 Hospital Management System")
 
     # Check if admin exists
-    admin_data = load_admin_credentials()
+    admin_exists = db.query(User).filter(User.role == 'admin').first() is not None
 
-    if not admin_data:
+    if not admin_exists:
         st.warning("Welcome! Please create an admin account to get started.")
         with st.form("create_admin"):
             new_username = st.text_input("Create Admin Username")
@@ -113,9 +75,12 @@ def login_page():
                 elif new_password != confirm_password:
                     st.error("Passwords do not match")
                 else:
-                    save_admin_credentials(new_username, new_password)
-                    st.success("Admin account created successfully! Please log in.")
-                    st.rerun()
+                    try:
+                        save_user_credentials(new_username, new_password, role='admin')
+                        st.success("Admin account created successfully! Please log in.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error creating admin account: {str(e)}")
     else:
         # Add tabs for login/signup
         tab1, tab2 = st.tabs(["Login", "Create Staff Account"])
@@ -125,12 +90,13 @@ def login_page():
                 username = st.text_input("Username")
                 password = st.text_input("Password", type="password")
                 if st.form_submit_button("Login"):
-                    authenticated, is_admin = verify_credentials(username, password)
+                    authenticated, is_admin, user_id = verify_credentials(username, password)
                     if authenticated:
                         st.session_state.logged_in = True
                         st.session_state.username = username
                         st.session_state.is_admin = is_admin
-                        log_activity("Logged in as " + ("admin" if is_admin else "staff"))
+                        st.session_state.user_id = user_id
+                        log_activity("Logged in", f"User logged in as {username}")
                         st.rerun()
                     else:
                         st.error("Invalid credentials")
@@ -151,9 +117,9 @@ def login_page():
                         st.error("Passwords do not match")
                     else:
                         try:
-                            save_staff_credentials(staff_username, staff_password, role)
+                            save_user_credentials(staff_username, staff_password, role)
                             st.success("Staff account created successfully! Please log in.")
-                            log_activity(f"New staff account created: {staff_username} ({role})")
+                            log_activity("Staff account created", f"New staff account created: {staff_username} ({role})")
                         except Exception as e:
                             st.error(f"Error creating staff account: {str(e)}")
 
@@ -172,33 +138,39 @@ def main_page():
             st.session_state.logged_in = False
             st.session_state.username = None
             st.session_state.is_admin = False
+            st.session_state.user_id = None
             st.rerun()
 
     # Main content
     if st.session_state.current_page == "Dashboard":
         st.title("Hospital Dashboard")
 
-        # Example metrics
+        # Real metrics from database
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Total Patients", "150")
+            patient_count = db.query(Patient).count()
+            st.metric("Total Patients", patient_count)
         with col2:
-            st.metric("Today's Appointments", "25")
+            today_appointments = db.query(Appointment).filter(
+                Appointment.appointment_date >= datetime.now().date()
+            ).count()
+            st.metric("Today's Appointments", today_appointments)
         with col3:
-            st.metric("Available Staff", "45")
+            staff_count = db.query(User).filter(User.role != 'admin').count()
+            st.metric("Available Staff", staff_count)
         with col4:
-            st.metric("Bed Occupancy", "75%")
+            low_stock_count = db.query(Inventory).filter(
+                Inventory.quantity <= Inventory.reorder_level
+            ).count()
+            st.metric("Low Stock Items", low_stock_count)
 
     elif st.session_state.current_page == "Audit Log":
         if st.session_state.is_admin:
             st.title("System Audit Log")
-            if os.path.exists("audit_log.txt"):
-                with open("audit_log.txt", "r") as f:
-                    logs = f.readlines()
-                for log in reversed(logs):  # Show most recent first
-                    st.text(log.strip())
-            else:
-                st.info("No audit logs found")
+            audit_logs = db.query(AuditLog).order_by(AuditLog.timestamp.desc()).all()
+            for log in audit_logs:
+                user = db.query(User).filter(User.id == log.user_id).first()
+                st.text(f"{log.timestamp} - {user.username if user else 'Unknown User'}: {log.action} - {log.details if log.details else ''}")
         else:
             st.error("Access Denied: Only administrators can view the audit log")
 

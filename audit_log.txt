@@ -3,3 +3,4 @@
 [2025-03-08 14:21:42] Dylen: Admin logged in
 [2025-03-08 14:24:28] Dylen: Admin logged in
 [2025-03-08 15:27:18] Dylen: Admin logged in
+2025-03-08 16:20:03 - None: New staff account created: Mitchell (Doctor)
