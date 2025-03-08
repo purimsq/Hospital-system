@@ -18,6 +18,8 @@ def initialize_session():
         st.session_state.username = None
     if 'current_page' not in st.session_state:
         st.session_state.current_page = "Dashboard"
+    if 'is_admin' not in st.session_state:
+        st.session_state.is_admin = False
 
 # Authentication functions
 def load_admin_credentials():
@@ -51,32 +53,47 @@ def log_activity(action):
 def login_page():
     st.title("🏥 Hospital Management System")
 
-    admin_exists = load_admin_credentials() is not None
+    # Check if admin exists
+    admin_exists = os.path.exists('admin.json')
 
     if not admin_exists:
-        st.warning("No admin account exists. Create one now.")
+        st.warning("Welcome! No admin account exists. Please create one now.")
         with st.form("create_admin"):
-            new_username = st.text_input("Username")
-            new_password = st.text_input("Password", type="password")
-            if st.form_submit_button("Create Admin"):
-                if new_username and new_password:
-                    save_admin_credentials(new_username, new_password)
-                    st.success("Admin account created! Please log in.")
-                    st.rerun()
-                else:
+            new_username = st.text_input("Create Admin Username")
+            new_password = st.text_input("Create Admin Password", type="password")
+            confirm_password = st.text_input("Confirm Password", type="password")
+
+            if st.form_submit_button("Create Admin Account"):
+                if not new_username or not new_password:
                     st.error("Please fill in all fields")
-    else:
-        with st.form("login"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            if st.form_submit_button("Login"):
-                if verify_admin(username, password):
-                    st.session_state.logged_in = True
-                    st.session_state.username = username
-                    log_activity("Logged in")
-                    st.rerun()
+                elif new_password != confirm_password:
+                    st.error("Passwords do not match")
                 else:
-                    st.error("Invalid credentials")
+                    save_admin_credentials(new_username, new_password)
+                    st.success("Admin account created successfully! Please log in.")
+                    st.rerun()
+    else:
+        # Add tabs for login/signup
+        tab1, tab2 = st.tabs(["Login", "Create Staff Account"])
+
+        with tab1:
+            with st.form("login"):
+                username = st.text_input("Username")
+                password = st.text_input("Password", type="password")
+                if st.form_submit_button("Login"):
+                    if verify_admin(username, password):
+                        st.session_state.logged_in = True
+                        st.session_state.username = username
+                        st.session_state.is_admin = True
+                        log_activity("Logged in as admin")
+                        st.rerun()
+                    else:
+                        # Here we would check staff credentials
+                        st.error("Invalid credentials")
+
+        with tab2:
+            st.info("Staff account creation feature coming soon...")
+            # We'll implement staff account creation in the next iteration
 
 def main_page():
     # Sidebar navigation
@@ -92,6 +109,7 @@ def main_page():
             log_activity("Logged out")
             st.session_state.logged_in = False
             st.session_state.username = None
+            st.session_state.is_admin = False
             st.rerun()
 
     # Main content
