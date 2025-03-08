@@ -41,16 +41,52 @@ def save_admin_credentials(username, password):
     with open('admin.json', 'w') as f:
         json.dump(admin_data, f)
 
-def verify_admin(username, password):
+def load_staff_credentials():
     try:
-        admin_data = load_admin_credentials()
-        if admin_data and admin_data['username'] == username:
-            return bcrypt.checkpw(password.encode('utf-8'), 
-                                admin_data['password'].encode('utf-8'))
-    except Exception as e:
-        st.error(f"Error verifying credentials: {str(e)}")
-        return False
-    return False
+        if os.path.exists('staff.json'):
+            with open('staff.json', 'r') as f:
+                return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        if os.path.exists('staff.json'):
+            os.remove('staff.json')
+    return {'staff': []}
+
+def save_staff_credentials(username, password, role):
+    staff_data = load_staff_credentials()
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    staff_data['staff'].append({
+        'username': username,
+        'password': hashed.decode('utf-8'),
+        'role': role
+    })
+    with open('staff.json', 'w') as f:
+        json.dump(staff_data, f)
+
+def verify_credentials(username, password):
+    # Check admin credentials first
+    admin_data = load_admin_credentials()
+    if admin_data and admin_data['username'] == username:
+        try:
+            if bcrypt.checkpw(password.encode('utf-8'), 
+                            admin_data['password'].encode('utf-8')):
+                return True, True  # authenticated, is_admin
+        except Exception as e:
+            st.error(f"Error verifying admin credentials: {str(e)}")
+            return False, False
+
+    # Check staff credentials
+    staff_data = load_staff_credentials()
+    for staff in staff_data['staff']:
+        if staff['username'] == username:
+            try:
+                if bcrypt.checkpw(password.encode('utf-8'), 
+                                staff['password'].encode('utf-8')):
+                    return True, False  # authenticated, not admin
+            except Exception as e:
+                st.error(f"Error verifying staff credentials: {str(e)}")
+                return False, False
+
+    return False, False
 
 def log_activity(action):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -89,19 +125,37 @@ def login_page():
                 username = st.text_input("Username")
                 password = st.text_input("Password", type="password")
                 if st.form_submit_button("Login"):
-                    if verify_admin(username, password):
+                    authenticated, is_admin = verify_credentials(username, password)
+                    if authenticated:
                         st.session_state.logged_in = True
                         st.session_state.username = username
-                        st.session_state.is_admin = True
-                        log_activity("Logged in as admin")
+                        st.session_state.is_admin = is_admin
+                        log_activity("Logged in as " + ("admin" if is_admin else "staff"))
                         st.rerun()
                     else:
-                        # Here we would check staff credentials
                         st.error("Invalid credentials")
 
         with tab2:
-            st.info("Staff account creation feature coming soon...")
-            # We'll implement staff account creation in the next iteration
+            with st.form("create_staff"):
+                st.subheader("Create New Staff Account")
+                staff_username = st.text_input("Staff Username")
+                staff_password = st.text_input("Staff Password", type="password")
+                confirm_staff_password = st.text_input("Confirm Password", type="password")
+                role = st.selectbox("Staff Role", 
+                    ["Doctor", "Nurse", "Receptionist", "Pharmacist", "Lab Technician"])
+
+                if st.form_submit_button("Create Staff Account"):
+                    if not staff_username or not staff_password:
+                        st.error("Please fill in all fields")
+                    elif staff_password != confirm_staff_password:
+                        st.error("Passwords do not match")
+                    else:
+                        try:
+                            save_staff_credentials(staff_username, staff_password, role)
+                            st.success("Staff account created successfully! Please log in.")
+                            log_activity(f"New staff account created: {staff_username} ({role})")
+                        except Exception as e:
+                            st.error(f"Error creating staff account: {str(e)}")
 
 def main_page():
     # Sidebar navigation
@@ -136,14 +190,17 @@ def main_page():
             st.metric("Bed Occupancy", "75%")
 
     elif st.session_state.current_page == "Audit Log":
-        st.title("System Audit Log")
-        if os.path.exists("audit_log.txt"):
-            with open("audit_log.txt", "r") as f:
-                logs = f.readlines()
-            for log in reversed(logs):  # Show most recent first
-                st.text(log.strip())
+        if st.session_state.is_admin:
+            st.title("System Audit Log")
+            if os.path.exists("audit_log.txt"):
+                with open("audit_log.txt", "r") as f:
+                    logs = f.readlines()
+                for log in reversed(logs):  # Show most recent first
+                    st.text(log.strip())
+            else:
+                st.info("No audit logs found")
         else:
-            st.info("No audit logs found")
+            st.error("Access Denied: Only administrators can view the audit log")
 
 def main():
     st.set_page_config(
