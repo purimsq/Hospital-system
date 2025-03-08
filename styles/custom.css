@@ -1,0 +1,23 @@
+.stButton > button {
+    background-color: #F5F5DC;
+    color: #262730;
+    border: 1px solid #D4D4D4;
+}
+
+.stTextInput > div > div > input {
+    background-color: white;
+    color: #262730;
+}
+
+.reportview-container {
+    background-color: #FFFFFF;
+}
+
+.sidebar .sidebar-content {
+    background-color: #F5F5DC;
+}
+
+.stAlert {
+    background-color: #F0EAD6;
+    color: #262730;
+}
