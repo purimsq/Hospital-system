@@ -23,9 +23,13 @@ def initialize_session():
 
 # Authentication functions
 def load_admin_credentials():
-    if os.path.exists('admin.json'):
-        with open('admin.json', 'r') as f:
-            return json.load(f)
+    try:
+        if os.path.exists('admin.json'):
+            with open('admin.json', 'r') as f:
+                return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        if os.path.exists('admin.json'):
+            os.remove('admin.json')  # Remove corrupted file
     return None
 
 def save_admin_credentials(username, password):
@@ -38,10 +42,14 @@ def save_admin_credentials(username, password):
         json.dump(admin_data, f)
 
 def verify_admin(username, password):
-    admin_data = load_admin_credentials()
-    if admin_data and admin_data['username'] == username:
-        return bcrypt.checkpw(password.encode('utf-8'), 
-                            admin_data['password'].encode('utf-8'))
+    try:
+        admin_data = load_admin_credentials()
+        if admin_data and admin_data['username'] == username:
+            return bcrypt.checkpw(password.encode('utf-8'), 
+                                admin_data['password'].encode('utf-8'))
+    except Exception as e:
+        st.error(f"Error verifying credentials: {str(e)}")
+        return False
     return False
 
 def log_activity(action):
@@ -54,10 +62,10 @@ def login_page():
     st.title("🏥 Hospital Management System")
 
     # Check if admin exists
-    admin_exists = os.path.exists('admin.json')
+    admin_data = load_admin_credentials()
 
-    if not admin_exists:
-        st.warning("Welcome! No admin account exists. Please create one now.")
+    if not admin_data:
+        st.warning("Welcome! Please create an admin account to get started.")
         with st.form("create_admin"):
             new_username = st.text_input("Create Admin Username")
             new_password = st.text_input("Create Admin Password", type="password")
