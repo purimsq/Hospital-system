@@ -61,34 +61,40 @@ def login_page():
                     st.error("Please enter both username and password")
 
 def main_page():
-    st.sidebar.title("Navigation")
-    
-    # Sidebar navigation
-    page = st.sidebar.radio(
-        "Go to",
-        ["Dashboard", "Patients", "Appointments", "Inventory", 
-         "Staff", "Billing", "Reports", "Audit Log"]
-    )
-    
-    # Logout button
-    if st.sidebar.button("Logout"):
-        auth.log_activity("Admin logged out")
-        st.session_state.logged_in = False
-        st.session_state.username = None
-        st.rerun()
-    
-    # Page content
-    if page == "Dashboard":
+    # Handle navigation through session state to avoid duplicates
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = "Dashboard"
+
+    # Single navigation sidebar
+    with st.sidebar:
+        st.title("Navigation")
+
+        # Navigation options
+        st.session_state.current_page = st.radio(
+            "Go to",
+            ["Dashboard", "Patients", "Appointments", "Inventory", 
+             "Staff", "Billing", "Reports", "Audit Log"]
+        )
+
+        # Logout button
+        if st.button("Logout"):
+            auth.log_activity("Admin logged out")
+            st.session_state.logged_in = False
+            st.session_state.username = None
+            st.rerun()
+
+    # Page content based on navigation
+    if st.session_state.current_page == "Dashboard":
         st.title("Hospital Dashboard")
-        
+
         # Summary statistics
         col1, col2, col3, col4 = st.columns(4)
-        
+
         patients_df = data_manager.load_data("patients")
         appointments_df = data_manager.load_data("appointments")
         staff_df = data_manager.load_data("staff")
         inventory_df = data_manager.load_data("inventory")
-        
+
         with col1:
             st.metric("Total Patients", len(patients_df))
         with col2:
@@ -99,8 +105,8 @@ def main_page():
         with col4:
             st.metric("Low Stock Items", 
                      len(inventory_df[inventory_df['quantity'] < 10]))
-    
-    elif page == "Audit Log":
+
+    elif st.session_state.current_page == "Audit Log":
         st.title("System Audit Log")
         if os.path.exists("audit_log.txt"):
             with open("audit_log.txt", "r") as f:
@@ -112,7 +118,7 @@ def main_page():
 
 def main():
     initialize_session()
-    
+
     if not st.session_state.logged_in:
         login_page()
     else:
