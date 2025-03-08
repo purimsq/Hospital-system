@@ -27,7 +27,7 @@ def initialize_session():
 
 def login_page():
     st.title("🏥 Hospital Management System")
-    
+
     if not auth.admin_exists():
         st.warning("No admin account exists. Create one now.")
         with st.form("create_admin"):
@@ -36,22 +36,29 @@ def login_page():
             if st.form_submit_button("Create Admin"):
                 if new_username and new_password:
                     auth.save_admin(new_username, new_password)
-                    st.success("Admin account created successfully!")
-                    auth.log_activity("Admin account created")
+                    st.success("Admin account created successfully! Please log in with your credentials.")
+                    st.rerun()
                 else:
                     st.error("Please fill in all fields")
     else:
+        st.subheader("Admin Login")
         with st.form("login"):
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
-            if st.form_submit_button("Login"):
-                if auth.verify_admin(username, password):
-                    st.session_state.logged_in = True
-                    st.session_state.username = username
-                    auth.log_activity("Admin logged in")
-                    st.rerun()
+            submit = st.form_submit_button("Login")
+
+            if submit:
+                if username and password:
+                    if auth.verify_admin(username, password):
+                        st.session_state.logged_in = True
+                        st.session_state.username = username
+                        auth.log_activity("Admin logged in")
+                        st.success("Login successful! Redirecting...")
+                        st.rerun()
+                    else:
+                        st.error("Invalid username or password")
                 else:
-                    st.error("Invalid credentials")
+                    st.error("Please enter both username and password")
 
 def main_page():
     st.sidebar.title("Navigation")
